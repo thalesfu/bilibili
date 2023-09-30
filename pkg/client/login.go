@@ -51,10 +51,10 @@ type NavInfoResp struct {
 		FaceNft       int    `json:"face_nft"`
 		FaceNftType   int    `json:"face_nft_type"`
 		LevelInfo     struct {
-			CurrentLevel int    `json:"current_level"`
-			CurrentMin   int    `json:"current_min"`
-			CurrentExp   int    `json:"current_exp"`
-			NextExp      string `json:"next_exp"`
+			CurrentLevel int `json:"current_level"`
+			CurrentMin   int `json:"current_min"`
+			CurrentExp   int `json:"current_exp"`
+			NextExp      int `json:"next_exp"`
 		} `json:"level_info"`
 		Mid            int     `json:"mid"`
 		MobileVerified int     `json:"mobile_verified"`
@@ -129,10 +129,10 @@ type NavInfoResp struct {
 			TvVipPayType       int    `json:"tv_vip_pay_type"`
 		} `json:"vip"`
 		Wallet struct {
-			Mid           int `json:"mid"`
-			BcoinBalance  int `json:"bcoin_balance"`
-			CouponBalance int `json:"coupon_balance"`
-			CouponDueTime int `json:"coupon_due_time"`
+			Mid           int     `json:"mid"`
+			BcoinBalance  float32 `json:"bcoin_balance"`
+			CouponBalance int     `json:"coupon_balance"`
+			CouponDueTime int     `json:"coupon_due_time"`
 		} `json:"wallet"`
 		HasShop        bool   `json:"has_shop"`
 		ShopURL        string `json:"shop_url"`

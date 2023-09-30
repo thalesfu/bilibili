@@ -3,16 +3,20 @@ package client
 import (
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
-	"net/http"
-
 	"github.com/misssonder/bilibili/pkg/errors"
 	"github.com/misssonder/bilibili/pkg/video"
+	"golang.org/x/net/html"
+	"io"
+	"io/ioutil"
+	"net/http"
+	"net/url"
+	"strings"
 )
 
 const (
 	videoInfoUrl = "https://api.bilibili.com/x/web-interface/view"
 	playUrl      = "https://api.bilibili.com/x/player/playurl"
+	searchUrl    = "https://search.bilibili.com/all"
 )
 
 type VideoInfoResp struct {
@@ -193,45 +197,11 @@ type PlayUrlResp struct {
 			BackupURL []string `json:"backup_url"`
 		} `json:"durl"`
 		Dash struct {
-			Duration      int     `json:"duration"`
-			MinBufferTime float64 `json:"min_buffer_time"`
-			Video         []struct {
-				ID           int      `json:"id"`
-				BaseURL      string   `json:"base_url"`
-				BackupURL    []string `json:"backup_url"`
-				Bandwidth    int      `json:"bandwidth"`
-				MimeType     string   `json:"mime_type"`
-				Codecs       string   `json:"codecs"`
-				Width        int      `json:"width"`
-				Height       int      `json:"height"`
-				FrameRate    string   `json:"frame_rate"`
-				Sar          string   `json:"sar"`
-				StartWithSap int      `json:"start_with_sap"`
-				SegmentBase  struct {
-					Initialization string `json:"initialization"`
-					IndexRange     string `json:"index_range"`
-				} `json:"segment_base"`
-				Codecid int `json:"codecid"`
-			} `json:"video"`
-			Audio []struct {
-				ID           int      `json:"id"`
-				BaseURL      string   `json:"base_url"`
-				BackupURL    []string `json:"backup_url"`
-				Bandwidth    int      `json:"bandwidth"`
-				MimeType     string   `json:"mime_type"`
-				Codecs       string   `json:"codecs"`
-				Width        int      `json:"width"`
-				Height       int      `json:"height"`
-				FrameRate    string   `json:"frame_rate"`
-				Sar          string   `json:"sar"`
-				StartWithSap int      `json:"start_with_sap"`
-				SegmentBase  struct {
-					Initialization string `json:"initialization"`
-					IndexRange     string `json:"index_range"`
-				} `json:"segment_base"`
-				Codecid int `json:"codecid"`
-			} `json:"audio"`
-			Dolby struct {
+			Duration      int         `json:"duration"`
+			MinBufferTime float64     `json:"min_buffer_time"`
+			Video         []DashVideo `json:"video"`
+			Audio         []DashAudio `json:"audio"`
+			Dolby         struct {
 				Type  int         `json:"type"`
 				Audio interface{} `json:"audio"`
 			} `json:"dolby"`
@@ -249,6 +219,44 @@ type PlayUrlResp struct {
 		LastPlayTime int         `json:"last_play_time"`
 		LastPlayCid  int         `json:"last_play_cid"`
 	} `json:"data"`
+}
+
+type DashVideo struct {
+	ID           int      `json:"id"`
+	BaseURL      string   `json:"base_url"`
+	BackupURL    []string `json:"backup_url"`
+	Bandwidth    int      `json:"bandwidth"`
+	MimeType     string   `json:"mime_type"`
+	Codecs       string   `json:"codecs"`
+	Width        int      `json:"width"`
+	Height       int      `json:"height"`
+	FrameRate    string   `json:"frame_rate"`
+	Sar          string   `json:"sar"`
+	StartWithSap int      `json:"start_with_sap"`
+	SegmentBase  struct {
+		Initialization string `json:"initialization"`
+		IndexRange     string `json:"index_range"`
+	} `json:"segment_base"`
+	Codecid int `json:"codecid"`
+}
+
+type DashAudio struct {
+	ID           int      `json:"id"`
+	BaseURL      string   `json:"base_url"`
+	BackupURL    []string `json:"backup_url"`
+	Bandwidth    int      `json:"bandwidth"`
+	MimeType     string   `json:"mime_type"`
+	Codecs       string   `json:"codecs"`
+	Width        int      `json:"width"`
+	Height       int      `json:"height"`
+	FrameRate    string   `json:"frame_rate"`
+	Sar          string   `json:"sar"`
+	StartWithSap int      `json:"start_with_sap"`
+	SegmentBase  struct {
+		Initialization string `json:"initialization"`
+		IndexRange     string `json:"index_range"`
+	} `json:"segment_base"`
+	Codecid int `json:"codecid"`
 }
 
 func (client *Client) GetVideoInfo(id string) (*VideoInfoResp, error) {
@@ -372,7 +380,7 @@ func (client *Client) PlayUrl(bvid string, cid int64, qn Qn, fnval Fnval) (*Play
 		return nil, errors.ErrUnexpectedStatusCode(resp.StatusCode)
 	}
 
-	body, err := ioutil.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
 	}
@@ -386,4 +394,75 @@ func (client *Client) PlayUrl(bvid string, cid int64, qn Qn, fnval Fnval) (*Play
 	}
 
 	return playUrlResp, nil
+}
+
+func (client *Client) GetUPerVideos(uper string) (result map[string]string, error error) {
+	done := false
+	result = make(map[string]string)
+
+	pageIndex := 1
+
+	for !done || pageIndex > 20 {
+
+		u := fmt.Sprintf("%s?keyword=%s&single_column=0&&order=pubdate&page=%d", searchUrl, url.QueryEscape(uper), pageIndex)
+
+		client.HttpClient = &http.Client{}
+
+		request, err := client.newCookieRequest(http.MethodGet, u, nil)
+		request.Header.Set("User-Agent", "PostmanRuntime/7.32.3")
+		//request.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36 Edg/117.0.2045.41")
+		if err != nil {
+			error = err
+			break
+		}
+		resp, err := client.HttpClient.Do(request)
+		if err != nil {
+			error = err
+			break
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			error = errors.ErrUnexpectedStatusCode(resp.StatusCode)
+			break
+		}
+
+		doc, err := html.Parse(resp.Body)
+
+		if err != nil {
+			error = err
+		}
+
+		node := findNode(doc, "ul", "video-list clearfix")
+
+		if node != nil {
+			for child := node.FirstChild; child != nil; child = child.NextSibling {
+				if child.Type == html.ElementNode && child.Data == "li" {
+					if child.FirstChild != nil && child.FirstChild.Type == html.ElementNode && child.FirstChild.Data == "a" {
+						result[child.FirstChild.Attr[1].Val] = child.FirstChild.Attr[0].Val
+					}
+				}
+			}
+			pageIndex++
+		} else {
+			done = true
+		}
+	}
+
+	return result, nil
+}
+
+func findNode(n *html.Node, tag string, class string) *html.Node {
+	if n.Type == html.ElementNode && n.Data == tag {
+		for _, a := range n.Attr {
+			if a.Key == "class" && strings.Contains(a.Val, class) {
+				return n
+			}
+		}
+	}
+	for c := n.FirstChild; c != nil; c = c.NextSibling {
+		if result := findNode(c, tag, class); result != nil {
+			return result
+		}
+	}
+	return nil
 }

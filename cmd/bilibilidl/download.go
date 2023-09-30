@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bufio"
+	"bytes"
 	"fmt"
 	"io"
 	"net/http"
@@ -162,7 +164,7 @@ func download(id string) error {
 
 	switch format {
 	case bilibili.FnvalMP4:
-		playUrlResp, err := client.PlayUrl(bvID, cid, bilibili.Qn1080P, format)
+		playUrlResp, err := client.PlayUrl(bvID, cid, bilibili.Qn4k, format)
 		if err != nil {
 			return err
 		}
@@ -226,7 +228,9 @@ func download(id string) error {
 		}
 		ins.Start()
 		defer ins.Stop()
-		return merge(videoTmp.Name(), audioTmp.Name())
+		_, err = merge(videoTmp.Name(), audioTmp.Name(), path.Join(outputDir, outputFile))
+
+		return err
 	}
 	return nil
 }
@@ -250,18 +254,42 @@ func chooseMediaUrl(playUrlResp *bilibili.PlayUrlResp, qn bilibili.Qn) string {
 
 }
 
-func merge(video, audio string) error {
+func merge(video, audio, output string) (string, error) {
 	cmd := exec.Command("ffmpeg", "-y",
 		"-i", video,
 		"-i", audio,
 		"-c", "copy", // Just copy without re-encoding
 		"-shortest", // Finish encoding when the shortest input stream ends
-		path.Join(outputDir, outputFile),
-		"-loglevel", "warning",
+		output,
 	)
-	cmd.Stderr = os.Stderr
-	cmd.Stdout = os.Stdout
-	return cmd.Run()
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	var stdout bytes.Buffer
+	cmd.Stderr = &stdout
+	stdoutPipe, err := cmd.StdoutPipe()
+	if err != nil {
+		panic(err)
+	}
+
+	if err := cmd.Start(); err != nil {
+		fmt.Printf("%s\n", stderr.String())
+		return "", err
+	}
+
+	scanner := bufio.NewScanner(stdoutPipe)
+	for scanner.Scan() {
+		fmt.Println(scanner.Text())
+	}
+
+	err = cmd.Wait()
+	if err != nil {
+		fmt.Printf("%s\n", stderr.String())
+		return "", err
+	}
+
+	fmt.Printf("%s\n", stdout.String())
+	fmt.Printf("%s is merged from video %s and audio %s.\n", output, video, audio)
+	return output, nil
 }
 
 func getDownloadDestFile(dir, f string) (*os.File, error) {
