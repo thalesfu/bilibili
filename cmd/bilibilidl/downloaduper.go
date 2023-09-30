@@ -1,11 +1,11 @@
 package main
 
 import (
-	"errors"
 	"fmt"
 	"github.com/spf13/cobra"
 	"log"
 	"os"
+	"path"
 	"path/filepath"
 )
 
@@ -26,25 +26,8 @@ func init() {
 }
 
 func downloadUPerVideos(uper string) error {
-	file := getUPerVideosListFileLocation(uper)
 
-	if !PathExists(file) {
-		return errors.New(uper + "'s videos.yaml not found")
-	}
-
-	content, ok := LoadContent(file)
-
-	if !ok {
-		return errors.New("Load " + uper + "'s video.yaml from " + file + " fail.")
-	}
-
-	vp, ok := UnmarshalYaml[[]*UpVideoInfo](content)
-
-	if !ok {
-		return errors.New("Unmarshal " + uper + "'s video.yaml fail.")
-	}
-
-	videos := *vp
+	videos := AllVideos[uper]
 
 	for _, v := range videos {
 		if v.Location == "" {
@@ -53,10 +36,15 @@ func downloadUPerVideos(uper string) error {
 				log.Printf("setAV failed: %v\n", err)
 				continue
 			}
-			_, ok, _ := downloadAndMergeVideo(v)
+			ok := false
+			if v.VideoQuality != 0 {
+				_, ok, _ = downloadAndMergeVideo(v)
+			} else {
+				_, ok, _ = downloadVideo(v)
+			}
 			if ok {
-				content = MarshalYaml(videos)
-				WriteContent(file, content)
+				content := MarshalYaml(videos)
+				WriteContent(getUPerVideosListFileLocation(uper), content)
 			}
 		}
 	}
@@ -64,9 +52,44 @@ func downloadUPerVideos(uper string) error {
 	return nil
 }
 
+func downloadVideo(v *UpVideoInfo) (*UpVideoInfo, bool, error) {
+	folder := path.Join(getUPerVideosListFolderLocation(v.Author), v.Title)
+	err := os.MkdirAll(folder, os.ModePerm)
+	if err != nil {
+		log.Printf("MkdirAll %s failed: %v\n", folder, err)
+		return v, false, err
+	}
+	fileName := v.Part + ".mp4"
+	file := filepath.Join(folder, fileName)
+
+	writer, err := getDownloadDestFile(folder, file)
+	if err != nil {
+		return nil, false, err
+	}
+	defer func(writer *os.File) {
+		err := writer.Close()
+		if err != nil {
+			panic(err)
+		}
+	}(writer)
+
+	fmt.Printf("Download then video of %s directly.\n", v.Title)
+	err = downloadMedia("Video", v.DownloadURL, writer)
+	if err != nil {
+		return nil, false, err
+	}
+
+	return v, true, nil
+}
+
 func downloadAndMergeVideo(v *UpVideoInfo) (*UpVideoInfo, bool, error) {
-	folder := getUPerVideosListFolderLocation(v.Author)
-	file := filepath.Join(folder, v.Title+"["+v.VideoQuality.String()+","+v.AudioQuality.String()+"].mp4")
+	folder := path.Join(getUPerVideosListFolderLocation(v.Author), v.Title)
+	err := os.MkdirAll(folder, os.ModePerm)
+	if err != nil {
+		log.Printf("MkdirAll %s failed: %v\n", folder, err)
+		return v, false, err
+	}
+	file := filepath.Join(folder, v.Part+"["+v.VideoQuality.String()+","+v.AudioQuality.String()+"].mp4")
 
 	videoTmp, err := os.CreateTemp(folder, "bilibili_video_*.m4s")
 	if err != nil {

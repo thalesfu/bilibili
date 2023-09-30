@@ -396,15 +396,20 @@ func (client *Client) PlayUrl(bvid string, cid int64, qn Qn, fnval Fnval) (*Play
 	return playUrlResp, nil
 }
 
-func (client *Client) GetUPerVideos(uper string) (result map[string]string, error error) {
-	done := false
-	result = make(map[string]string)
+func (client *Client) GetUPerVideos(keyword string) (result []string, error error) {
+	result = make([]string, 0)
+
+	if strings.HasPrefix(keyword, "https://") {
+		result = append(result, keyword)
+		return result, nil
+	}
 
 	pageIndex := 1
+	done := false
 
 	for !done || pageIndex > 20 {
 
-		u := fmt.Sprintf("%s?keyword=%s&single_column=0&&order=pubdate&page=%d", searchUrl, url.QueryEscape(uper), pageIndex)
+		u := fmt.Sprintf("%s?keyword=%s&single_column=0&&order=pubdate&page=%d", searchUrl, url.QueryEscape(keyword), pageIndex)
 
 		client.HttpClient = &http.Client{}
 
@@ -438,7 +443,7 @@ func (client *Client) GetUPerVideos(uper string) (result map[string]string, erro
 			for child := node.FirstChild; child != nil; child = child.NextSibling {
 				if child.Type == html.ElementNode && child.Data == "li" {
 					if child.FirstChild != nil && child.FirstChild.Type == html.ElementNode && child.FirstChild.Data == "a" {
-						result[child.FirstChild.Attr[1].Val] = child.FirstChild.Attr[0].Val
+						result = append(result, child.FirstChild.Attr[0].Val)
 					}
 				}
 			}

@@ -7,10 +7,12 @@ import (
 	"github.com/samber/lo"
 	"github.com/spf13/cobra"
 	"log"
+	"os"
 	"path/filepath"
-	"sort"
 	"time"
 )
+
+var AllVideos map[string][]*UpVideoInfo
 
 var searchCmd = &cobra.Command{
 	Use:   "search",
@@ -26,6 +28,37 @@ var searchCmd = &cobra.Command{
 
 func init() {
 	rootCmd.AddCommand(searchCmd)
+	initAllVideos()
+}
+
+func initAllVideos() {
+	folder := getVideoLocation()
+	AllVideos = make(map[string][]*UpVideoInfo)
+
+	filepath.Walk(folder, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+
+		if info.IsDir() || info.Name() != "videos.yaml" {
+			return nil
+		}
+
+		content, ok := LoadContent(path)
+		if !ok {
+			return nil
+		}
+
+		vp, ok := UnmarshalYaml[[]*UpVideoInfo](content)
+		if !ok {
+			return nil
+		}
+
+		videos := *vp
+
+		AllVideos[videos[0].Author] = videos
+		return nil
+	})
 }
 
 func search(keyword string) error {
@@ -36,24 +69,13 @@ func search(keyword string) error {
 	}
 
 	if len(videos) > 0 {
-		upVideos := mapToUPVideos(videos)
-		for u, vs := range upVideos {
-			fmt.Printf("Uper: %s\n", u)
-
-			for _, v := range vs {
-				fmt.Printf("\t%s %s\n", v.Title, v.PublishTime)
-			}
-
-			content := MarshalYaml(vs)
-			WriteContent(getUPerVideosListFileLocation(u), content)
-		}
+		updateVideos(videos)
 	}
 
 	return nil
 }
 
-func mapToUPVideos(videos map[string]string) map[string][]*UpVideoInfo {
-	upVideos := make(map[string][]*UpVideoInfo)
+func updateVideos(videos []string) {
 	for _, vurl := range videos {
 		bvID, err := video.ExtractBvID(vurl)
 		if err != nil {
@@ -66,10 +88,16 @@ func mapToUPVideos(videos map[string]string) map[string][]*UpVideoInfo {
 		}
 
 		for _, page := range info.Pages {
+			_, ok := findVideo(info, page)
+			if ok {
+				continue
+			}
+
 			videoInfo := &UpVideoInfo{
 				BvID:        info.BvID,
 				AID:         info.AID,
 				Title:       info.Title,
+				Part:        page.Part,
 				Author:      info.Author,
 				Duration:    info.Duration,
 				PublishTime: info.PublishTime,
@@ -79,17 +107,26 @@ func mapToUPVideos(videos map[string]string) map[string][]*UpVideoInfo {
 			if err != nil {
 				log.Printf("Set AV failed: %v\n", err)
 			}
-			upVideos[info.Author] = append(upVideos[info.Author], videoInfo)
+			AllVideos[info.Author] = append(AllVideos[info.Author], videoInfo)
+
+			content := MarshalYaml(AllVideos[info.Author])
+			WriteContent(getUPerVideosListFileLocation(info.Author), content)
+
+			fmt.Printf("Add %s's video: %s %s %s\n", videoInfo.Author, videoInfo.Title, videoInfo.Part, videoInfo.PublishTime)
+
+		}
+	}
+}
+
+func findVideo(v *VideoInfo, p Page) (*UpVideoInfo, bool) {
+	vs := AllVideos[v.Author]
+	for _, v := range vs {
+		if v.CID == p.CID {
+			return v, true
 		}
 	}
 
-	for _, vs := range upVideos {
-		sort.Slice(vs, func(i, j int) bool {
-			return vs[i].PublishTime < vs[j].PublishTime
-		})
-	}
-
-	return upVideos
+	return nil, false
 }
 
 func setAV(v *UpVideoInfo) (*UpVideoInfo, error) {
@@ -98,19 +135,27 @@ func setAV(v *UpVideoInfo) (*UpVideoInfo, error) {
 		return v, err
 	}
 
-	maxVideo := lo.MaxBy(playUrlResp.Data.Dash.Video, func(item, max bilibili.DashVideo) bool {
-		return item.ID > max.ID
-	})
+	if len(playUrlResp.Data.Dash.Video) > 0 && len(playUrlResp.Data.Dash.Audio) > 0 {
+		maxVideo := lo.MaxBy(playUrlResp.Data.Dash.Video, func(item, max bilibili.DashVideo) bool {
+			return item.ID > max.ID
+		})
 
-	v.VideoQuality = bilibili.Qn(maxVideo.ID)
-	v.VideoURL = chooseMediaUrl(playUrlResp, v.VideoQuality)
+		v.VideoQuality = bilibili.Qn(maxVideo.ID)
+		v.VideoURL = chooseMediaUrl(playUrlResp, v.VideoQuality)
 
-	maxAudio := lo.MaxBy(playUrlResp.Data.Dash.Audio, func(item, max bilibili.DashAudio) bool {
-		return item.ID > max.ID
-	})
+		maxAudio := lo.MaxBy(playUrlResp.Data.Dash.Audio, func(item, max bilibili.DashAudio) bool {
+			return item.ID > max.ID
+		})
 
-	v.AudioQuality = bilibili.Qn(maxAudio.ID)
-	v.AudioURL = chooseMediaUrl(playUrlResp, v.AudioQuality)
+		v.AudioQuality = bilibili.Qn(maxAudio.ID)
+		v.AudioURL = chooseMediaUrl(playUrlResp, v.AudioQuality)
+
+		return v, nil
+	}
+
+	if len(playUrlResp.Data.Durl) > 0 && playUrlResp.Data.Durl[0].URL != "" {
+		v.DownloadURL = playUrlResp.Data.Durl[0].URL
+	}
 
 	return v, nil
 }
@@ -119,6 +164,7 @@ type UpVideoInfo struct {
 	BvID         string        `json:"bvid"`
 	AID          int           `json:"aid"`
 	Title        string        `json:"title"`
+	Part         string        `json:"part"`
 	Author       string        `json:"author"`
 	Duration     time.Duration `json:"duration"`
 	PublishTime  string        `json:"pubdate"`
@@ -127,6 +173,7 @@ type UpVideoInfo struct {
 	AudioQuality bilibili.Qn   `json:"audio_quality"`
 	VideoURL     string        `json:"video_url"`
 	AudioURL     string        `json:"audio_url"`
+	DownloadURL  string        `json:"download_url"`
 	Location     string        `json:"location"`
 }
 
